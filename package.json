@@ -1,0 +1,38 @@
+{
+  "name": "student-expressoo",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Student Expressoo — Smart College Management System (Student, Staff and Admin portals on one Express + MySQL backend)",
+  "workspaces": [
+    "packages/*",
+    "apps/*",
+    "server"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -n api,student,staff,admin -c blue,green,magenta,yellow \"npm:dev:server\" \"npm:dev:student\" \"npm:dev:staff\" \"npm:dev:admin\"",
+    "dev:server": "npm run dev -w @expressoo/server",
+    "dev:student": "npm run dev -w @expressoo/student",
+    "dev:staff": "npm run dev -w @expressoo/staff",
+    "dev:admin": "npm run dev -w @expressoo/admin",
+    "start": "npm start -w @expressoo/server",
+    "build": "npm run build:student && npm run build:staff && npm run build:admin",
+    "build:student": "npm run build -w @expressoo/student",
+    "build:staff": "npm run build -w @expressoo/staff",
+    "build:admin": "npm run build -w @expressoo/admin",
+    "db:migrate": "npm run db:migrate -w @expressoo/server",
+    "db:deploy": "npm run db:deploy -w @expressoo/server",
+    "db:seed": "npm run db:seed -w @expressoo/server",
+    "db:reset": "npm run db:reset -w @expressoo/server",
+    "db:studio": "npm run db:studio -w @expressoo/server",
+    "create-admin": "npm run create-admin -w @expressoo/server",
+    "lint": "oxlint apps/student/src apps/staff/src apps/admin/src packages/shared/src server/src server/scripts server/prisma server/tests",
+    "test": "npm test -w @expressoo/server"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "oxlint": "^1.75.0"
+  },
+  "engines": {
+    "node": ">=20.19"
+  }
+}

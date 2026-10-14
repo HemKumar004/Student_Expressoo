@@ -1,0 +1,538 @@
+// Student Expressoo — relational data model (MySQL 8, InnoDB)
+//
+// Conventions
+// - Tables and columns are snake_case (@@map / @map); Prisma fields are camelCase.
+// - Identifiers are INT AUTO_INCREMENT everywhere (consistent, JSON-safe).
+// - Money is DECIMAL(10,2); DATE columns hold calendar dates, DATETIME(3) holds instants (UTC).
+// - Accounts are deactivated, never hard-deleted, so academic and financial history stays intact.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enumerations
+// ---------------------------------------------------------------------------
+
+enum Role {
+  STUDENT
+  STAFF
+  ADMIN
+}
+
+enum AccountStatus {
+  PENDING
+  ACTIVE
+  INACTIVE
+}
+
+/// Class Representative (CR) and Ladies Representative (LR) are student designations.
+enum RepresentativeRole {
+  NONE
+  CR
+  LR
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  LATE
+}
+
+enum FeeStatus {
+  UNPAID
+  PARTIAL
+  PAID
+  WAIVED
+}
+
+enum PaymentMethod {
+  CASH
+  UPI
+  CARD
+  BANK_TRANSFER
+  CHEQUE
+  DEMAND_DRAFT
+}
+
+enum PaymentStatus {
+  RECORDED
+  VOIDED
+}
+
+enum NotificationCategory {
+  GENERAL
+  ACADEMIC
+  EXAM
+  FEE
+  EVENT
+  URGENT
+  ALERT
+}
+
+enum NotificationTarget {
+  ALL
+  STUDENTS
+  STAFF
+  COURSE
+  SECTION
+  USER
+}
+
+enum AnnouncementAudience {
+  ALL
+  STUDENTS
+  STAFF
+}
+
+enum AlertStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+}
+
+// ---------------------------------------------------------------------------
+// Identity and access
+// ---------------------------------------------------------------------------
+
+model User {
+  id           Int           @id @default(autoincrement())
+  username     String        @unique @db.VarChar(50)
+  email        String        @unique @db.VarChar(191)
+  passwordHash String        @map("password_hash") @db.VarChar(255)
+  fullName     String        @map("full_name") @db.VarChar(120)
+  mobile       String?       @db.VarChar(20)
+  role         Role
+  status       AccountStatus @default(ACTIVE)
+  /// Incremented on password change / deactivation to revoke issued tokens.
+  tokenVersion Int           @default(0) @map("token_version")
+  lastLoginAt  DateTime?     @map("last_login_at")
+  createdAt    DateTime      @default(now()) @map("created_at")
+  updatedAt    DateTime      @updatedAt @map("updated_at")
+
+  student Student?
+  staff   Staff?
+
+  recordedSessions      ClassSession[]          @relation("SessionRecordedBy")
+  uploadedMaterials     StudyMaterial[]         @relation("MaterialUploadedBy")
+  sentNotifications     Notification[]          @relation("NotificationSender")
+  notificationInbox     NotificationRecipient[]
+  announcements         Announcement[]          @relation("AnnouncementAuthor")
+  raisedAlerts          TeacherAlert[]          @relation("AlertRaisedBy")
+  recordedPayments      Payment[]               @relation("PaymentRecordedBy")
+  voidedPayments        Payment[]               @relation("PaymentVoidedBy")
+  createdFeeStructures  FeeStructure[]          @relation("FeeStructureCreatedBy")
+  auditLogs             AuditLog[]
+
+  @@index([role, status])
+  @@map("users")
+}
+
+model Student {
+  id                 Int                @id @default(autoincrement())
+  userId             Int                @unique @map("user_id")
+  rollNumber         String             @unique @map("roll_number") @db.VarChar(20)
+  sectionId          Int                @map("section_id")
+  admissionYear      Int?               @map("admission_year") @db.SmallInt
+  representativeRole RepresentativeRole @default(NONE) @map("representative_role")
+  createdAt          DateTime           @default(now()) @map("created_at")
+  updatedAt          DateTime           @updatedAt @map("updated_at")
+
+  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  section           Section            @relation(fields: [sectionId], references: [id], onDelete: Restrict)
+  attendanceRecords AttendanceRecord[]
+  feeRecords        StudentFeeRecord[]
+
+  @@index([sectionId, representativeRole])
+  @@map("students")
+}
+
+model Staff {
+  id           Int      @id @default(autoincrement())
+  userId       Int      @unique @map("user_id")
+  employeeId   String   @unique @map("employee_id") @db.VarChar(20)
+  departmentId Int      @map("department_id")
+  designation  String?  @db.VarChar(80)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  user          User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  department    Department        @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  assignments   StaffAssignment[]
+  classSessions ClassSession[]
+  alerts        TeacherAlert[]
+
+  @@index([departmentId])
+  @@map("staff")
+}
+
+// ---------------------------------------------------------------------------
+// Academic structure
+// ---------------------------------------------------------------------------
+
+model Department {
+  id        Int      @id @default(autoincrement())
+  code      String   @unique @db.VarChar(16)
+  name      String   @db.VarChar(120)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  courses Course[]
+  staff   Staff[]
+
+  @@map("departments")
+}
+
+/// A programme / branch of study, e.g. "CSE — B.Tech Computer Science & Engineering".
+model Course {
+  id            Int      @id @default(autoincrement())
+  code          String   @unique @db.VarChar(20)
+  name          String   @db.VarChar(150)
+  departmentId  Int      @map("department_id")
+  durationYears Int      @default(4) @map("duration_years") @db.TinyInt
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  department    Department     @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  sections      Section[]
+  subjects      Subject[]
+  feeStructures FeeStructure[]
+  notifications Notification[]
+
+  @@index([departmentId])
+  @@map("courses")
+}
+
+/// A class group within a course and year of study, e.g. CSE · Year 3 · Section A.
+model Section {
+  id          Int      @id @default(autoincrement())
+  courseId    Int      @map("course_id")
+  yearOfStudy Int      @map("year_of_study") @db.TinyInt
+  name        String   @db.VarChar(10)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  course        Course            @relation(fields: [courseId], references: [id], onDelete: Restrict)
+  students      Student[]
+  assignments   StaffAssignment[]
+  classSessions ClassSession[]
+  materials     StudyMaterial[]
+  alerts        TeacherAlert[]
+  notifications Notification[]
+
+  @@unique([courseId, yearOfStudy, name])
+  @@map("sections")
+}
+
+model Subject {
+  id          Int      @id @default(autoincrement())
+  code        String   @unique @db.VarChar(20)
+  name        String   @db.VarChar(150)
+  courseId    Int      @map("course_id")
+  yearOfStudy Int      @map("year_of_study") @db.TinyInt
+  semester    Int?     @db.TinyInt
+  credits     Int?     @db.TinyInt
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  course        Course            @relation(fields: [courseId], references: [id], onDelete: Restrict)
+  assignments   StaffAssignment[]
+  classSessions ClassSession[]
+  materials     StudyMaterial[]
+  alerts        TeacherAlert[]
+
+  @@index([courseId, yearOfStudy])
+  @@map("subjects")
+}
+
+/// Authorises a staff member to teach (mark attendance, share material) a subject for a section.
+/// Students are enrolled through their section, so a separate enrolment table is not needed.
+model StaffAssignment {
+  id        Int      @id @default(autoincrement())
+  staffId   Int      @map("staff_id")
+  subjectId Int      @map("subject_id")
+  sectionId Int      @map("section_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  staff   Staff   @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  subject Subject @relation(fields: [subjectId], references: [id], onDelete: Restrict)
+  section Section @relation(fields: [sectionId], references: [id], onDelete: Restrict)
+
+  @@unique([staffId, subjectId, sectionId])
+  @@index([sectionId, subjectId])
+  @@map("staff_assignments")
+}
+
+// ---------------------------------------------------------------------------
+// Attendance
+// ---------------------------------------------------------------------------
+
+/// One taught period. A section can only have one class per date + period.
+model ClassSession {
+  id           Int      @id @default(autoincrement())
+  sectionId    Int      @map("section_id")
+  subjectId    Int      @map("subject_id")
+  staffId      Int?     @map("staff_id")
+  date         DateTime @db.Date
+  period       Int      @db.TinyInt
+  topic        String?  @db.VarChar(200)
+  recordedById Int      @map("recorded_by_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  section    Section            @relation(fields: [sectionId], references: [id], onDelete: Restrict)
+  subject    Subject            @relation(fields: [subjectId], references: [id], onDelete: Restrict)
+  staff      Staff?             @relation(fields: [staffId], references: [id], onDelete: SetNull)
+  recordedBy User               @relation("SessionRecordedBy", fields: [recordedById], references: [id], onDelete: Restrict)
+  records    AttendanceRecord[]
+
+  @@unique([sectionId, date, period])
+  @@index([subjectId, date])
+  @@index([staffId, date])
+  @@map("class_sessions")
+}
+
+model AttendanceRecord {
+  id        Int              @id @default(autoincrement())
+  sessionId Int              @map("session_id")
+  studentId Int              @map("student_id")
+  status    AttendanceStatus
+  remarks   String?          @db.VarChar(200)
+  createdAt DateTime         @default(now()) @map("created_at")
+  updatedAt DateTime         @updatedAt @map("updated_at")
+
+  session ClassSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  student Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, studentId])
+  @@index([studentId, status])
+  @@map("attendance_records")
+}
+
+// ---------------------------------------------------------------------------
+// Fees and payments
+// ---------------------------------------------------------------------------
+
+model FeeStructure {
+  id           Int      @id @default(autoincrement())
+  name         String   @db.VarChar(120)
+  academicYear String   @map("academic_year") @db.VarChar(9)
+  /// NULL = applies to every course.
+  courseId     Int?     @map("course_id")
+  /// NULL = applies to every year of study.
+  yearOfStudy  Int?     @map("year_of_study") @db.TinyInt
+  amount       Decimal  @db.Decimal(10, 2)
+  dueDate      DateTime @map("due_date") @db.Date
+  description  String?  @db.Text
+  isActive     Boolean  @default(true) @map("is_active")
+  createdById  Int?     @map("created_by_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  course    Course?            @relation(fields: [courseId], references: [id], onDelete: Restrict)
+  createdBy User?              @relation("FeeStructureCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  records   StudentFeeRecord[]
+
+  @@index([courseId, yearOfStudy])
+  @@map("fee_structures")
+}
+
+model StudentFeeRecord {
+  id             Int       @id @default(autoincrement())
+  studentId      Int       @map("student_id")
+  feeStructureId Int       @map("fee_structure_id")
+  amount         Decimal   @db.Decimal(10, 2)
+  discount       Decimal   @default(0) @db.Decimal(10, 2)
+  amountPaid     Decimal   @default(0) @map("amount_paid") @db.Decimal(10, 2)
+  status         FeeStatus @default(UNPAID)
+  dueDate        DateTime  @map("due_date") @db.Date
+  remarks        String?   @db.VarChar(255)
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  student      Student      @relation(fields: [studentId], references: [id], onDelete: Restrict)
+  feeStructure FeeStructure @relation(fields: [feeStructureId], references: [id], onDelete: Restrict)
+  payments     Payment[]
+
+  @@unique([studentId, feeStructureId])
+  @@index([status, dueDate])
+  @@map("student_fee_records")
+}
+
+/// Payments are recorded by the accounts office (admin). They are never edited or deleted;
+/// a mistaken payment is VOIDED, which reverses its effect on the fee record.
+model Payment {
+  id           Int           @id @default(autoincrement())
+  feeRecordId  Int           @map("fee_record_id")
+  receiptNo    String        @unique @map("receipt_no") @db.VarChar(40)
+  amount       Decimal       @db.Decimal(10, 2)
+  method       PaymentMethod
+  referenceNo  String?       @map("reference_no") @db.VarChar(100)
+  paidOn       DateTime      @map("paid_on") @db.Date
+  status       PaymentStatus @default(RECORDED)
+  notes        String?       @db.VarChar(255)
+  recordedById Int           @map("recorded_by_id")
+  voidedById   Int?          @map("voided_by_id")
+  voidedAt     DateTime?     @map("voided_at")
+  voidReason   String?       @map("void_reason") @db.VarChar(255)
+  createdAt    DateTime      @default(now()) @map("created_at")
+  updatedAt    DateTime      @updatedAt @map("updated_at")
+
+  feeRecord  StudentFeeRecord @relation(fields: [feeRecordId], references: [id], onDelete: Restrict)
+  recordedBy User             @relation("PaymentRecordedBy", fields: [recordedById], references: [id], onDelete: Restrict)
+  voidedBy   User?            @relation("PaymentVoidedBy", fields: [voidedById], references: [id], onDelete: SetNull)
+
+  @@index([feeRecordId])
+  @@index([paidOn, status])
+  @@map("payments")
+}
+
+// ---------------------------------------------------------------------------
+// Learning resources
+// ---------------------------------------------------------------------------
+
+model StudyMaterial {
+  id            Int      @id @default(autoincrement())
+  title         String   @db.VarChar(200)
+  description   String?  @db.Text
+  unit          String?  @db.VarChar(40)
+  subjectId     Int      @map("subject_id")
+  /// NULL = shared with every section the subject is taught to.
+  sectionId     Int?     @map("section_id")
+  storedName    String   @unique @map("stored_name") @db.VarChar(255)
+  originalName  String   @map("original_name") @db.VarChar(255)
+  mimeType      String   @map("mime_type") @db.VarChar(150)
+  sizeBytes     Int      @map("size_bytes")
+  downloadCount Int      @default(0) @map("download_count")
+  uploadedById  Int      @map("uploaded_by_id")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  subject    Subject  @relation(fields: [subjectId], references: [id], onDelete: Restrict)
+  section    Section? @relation(fields: [sectionId], references: [id], onDelete: Restrict)
+  uploadedBy User     @relation("MaterialUploadedBy", fields: [uploadedById], references: [id], onDelete: Restrict)
+
+  @@index([subjectId, sectionId])
+  @@index([uploadedById])
+  @@index([createdAt])
+  @@map("study_materials")
+}
+
+// ---------------------------------------------------------------------------
+// Communication
+// ---------------------------------------------------------------------------
+
+model Notification {
+  id          Int                  @id @default(autoincrement())
+  title       String               @db.VarChar(150)
+  message     String               @db.Text
+  category    NotificationCategory @default(GENERAL)
+  targetType  NotificationTarget   @map("target_type")
+  /// Human readable audience, e.g. "CSE · Year 3 · A, CSE · Year 3 · B".
+  targetLabel String               @map("target_label") @db.VarChar(255)
+  courseId    Int?                 @map("course_id")
+  sectionId   Int?                 @map("section_id")
+  /// Optional date/time the notice refers to (class, exam, event).
+  eventAt     DateTime?            @map("event_at")
+  /// NULL for system-generated notifications.
+  senderId    Int?                 @map("sender_id")
+  createdAt   DateTime             @default(now()) @map("created_at")
+
+  sender     User?                   @relation("NotificationSender", fields: [senderId], references: [id], onDelete: SetNull)
+  course     Course?                 @relation(fields: [courseId], references: [id], onDelete: SetNull)
+  section    Section?                @relation(fields: [sectionId], references: [id], onDelete: SetNull)
+  recipients NotificationRecipient[]
+
+  @@index([senderId, createdAt])
+  @@index([createdAt])
+  @@map("notifications")
+}
+
+model NotificationRecipient {
+  id             Int       @id @default(autoincrement())
+  notificationId Int       @map("notification_id")
+  userId         Int       @map("user_id")
+  readAt         DateTime? @map("read_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  notification Notification @relation(fields: [notificationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([notificationId, userId])
+  @@index([userId, readAt])
+  @@map("notification_recipients")
+}
+
+/// Institution-wide notice board entries published by administrators.
+model Announcement {
+  id          Int                  @id @default(autoincrement())
+  title       String               @db.VarChar(150)
+  body        String               @db.Text
+  audience    AnnouncementAudience @default(ALL)
+  isPinned    Boolean              @default(false) @map("is_pinned")
+  publishedAt DateTime             @default(now()) @map("published_at")
+  expiresAt   DateTime?            @map("expires_at")
+  authorId    Int?                 @map("author_id")
+  createdAt   DateTime             @default(now()) @map("created_at")
+  updatedAt   DateTime             @updatedAt @map("updated_at")
+
+  author User? @relation("AnnouncementAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@index([audience, publishedAt])
+  @@map("announcements")
+}
+
+/// Raised by a CR/LR when a teacher has not arrived for a scheduled period.
+model TeacherAlert {
+  id             Int         @id @default(autoincrement())
+  sectionId      Int         @map("section_id")
+  raisedById     Int         @map("raised_by_id")
+  staffId        Int         @map("staff_id")
+  subjectId      Int?        @map("subject_id")
+  period         Int         @db.TinyInt
+  alertDate      DateTime    @map("alert_date") @db.Date
+  message        String?     @db.VarChar(500)
+  status         AlertStatus @default(OPEN)
+  responseNote   String?     @map("response_note") @db.VarChar(300)
+  acknowledgedAt DateTime?   @map("acknowledged_at")
+  resolvedAt     DateTime?   @map("resolved_at")
+  createdAt      DateTime    @default(now()) @map("created_at")
+  updatedAt      DateTime    @updatedAt @map("updated_at")
+
+  section  Section  @relation(fields: [sectionId], references: [id], onDelete: Restrict)
+  raisedBy User     @relation("AlertRaisedBy", fields: [raisedById], references: [id], onDelete: Restrict)
+  staff    Staff    @relation(fields: [staffId], references: [id], onDelete: Restrict)
+  subject  Subject? @relation(fields: [subjectId], references: [id], onDelete: SetNull)
+
+  @@index([staffId, status])
+  @@index([sectionId, createdAt])
+  @@map("teacher_alerts")
+}
+
+// ---------------------------------------------------------------------------
+// Administration
+// ---------------------------------------------------------------------------
+
+model AuditLog {
+  id         Int      @id @default(autoincrement())
+  actorId    Int?     @map("actor_id")
+  action     String   @db.VarChar(64)
+  entityType String   @map("entity_type") @db.VarChar(64)
+  entityId   String?  @map("entity_id") @db.VarChar(64)
+  summary    String   @db.VarChar(255)
+  metadata   Json?
+  ipAddress  String?  @map("ip_address") @db.VarChar(45)
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([actorId, createdAt])
+  @@index([entityType, entityId])
+  @@map("audit_logs")
+}

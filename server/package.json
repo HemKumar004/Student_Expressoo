@@ -1,0 +1,38 @@
+{
+  "name": "@expressoo/server",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Shared Express REST API for the Student Expressoo portals (MySQL via Prisma)",
+  "main": "src/server.js",
+  "type": "commonjs",
+  "scripts": {
+    "postinstall": "prisma generate",
+    "dev": "nodemon --watch src --ext js,json src/server.js",
+    "start": "node src/server.js",
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
+    "db:seed": "node prisma/seed.js",
+    "db:reset": "prisma migrate reset",
+    "db:studio": "prisma studio",
+    "create-admin": "node scripts/create-admin.js",
+    "import-mongo": "node scripts/import-mongo-export.js",
+    "test": "node --test --test-concurrency=1 \"tests/*.test.js\""
+  },
+  "dependencies": {
+    "@prisma/client": "~6.19.3",
+    "bcryptjs": "^3.0.3",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.7.1",
+    "helmet": "^8.3.0",
+    "jsonwebtoken": "^9.0.3",
+    "multer": "^2.2.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.14",
+    "prisma": "~6.19.3"
+  }
+}

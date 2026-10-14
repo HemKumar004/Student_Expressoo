@@ -1,0 +1,24 @@
+{
+  "name": "@expressoo/shared",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Student Expressoo design system, API client and auth utilities shared by the three portals",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./styles.css": "./src/styles/index.css"
+  },
+  "sideEffects": [
+    "*.css"
+  ],
+  "dependencies": {
+    "@fontsource-variable/inter": "^5.2.8",
+    "lucide-react": "^1.56.0"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-router-dom": "^7.0.0"
+  }
+}

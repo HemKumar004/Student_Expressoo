@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+
+# Builds
+dist/
+dist-ssr/
+*.local
+
+# Environment — never commit real credentials
+# server/.env holds secrets. Portal apps/*/.env files hold PUBLIC defaults only and are
+# committed (Vite convention); put per-machine overrides in .env.local (ignored).
+server/.env
+server/.env.*
+!server/.env.example
+.env.local
+.env.*.local
+
+# Uploaded files (runtime data, not source)
+server/uploads/*
+!server/uploads/.gitkeep
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Editors / OS
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+*.sw?
+
+# Test artefacts
+server/tests/tmp-uploads/
